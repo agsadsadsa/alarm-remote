@@ -48,8 +48,8 @@ async def handler(websocket):
             await notify_users()
 
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", 8000):
-        print("服务器已启动，监听端口 8000...")
+    async with websockets.serve(handler, "0.0.0.0", 10000):
+        print("服务器已启动，监听端口 10000...")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
