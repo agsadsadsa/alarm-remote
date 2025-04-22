@@ -1,50 +1,52 @@
 import asyncio
 import websockets
+import json
 
-connected = {}
+clients = {}
+
+async def notify_users():
+    users = [user["nickname"] for user in clients.values()]
+    message = f"USERS::{','.join(users)}"
+    await asyncio.gather(*[ws.send(message) for ws in clients])
 
 async def handler(websocket):
-    user = None
     try:
         async for message in websocket:
             if message.startswith("REGISTER::"):
-                parts = message.split("::")
-                if len(parts) == 4:
-                    _, user, groups, role = parts
-                    connected[user] = {"ws": websocket, "groups": groups.split(","), "role": role}
-                    await broadcast_users()
+                _, nickname, group, role = message.split("::")
+                clients[websocket] = {"nickname": nickname, "group": group, "role": role}
+                await notify_users()
 
             elif message.startswith("GROUP_CALL::"):
-                _, sender, group_str, role = message.split("::")
-                groups = group_str.split(",")
-                for target, info in connected.items():
-                    if target != sender and (info["role"] == "admin" or any(g in info["groups"] for g in groups)):
-                        await info["ws"].send(f"GROUP_CALL::{sender}::{group_str}::{role}")
+                _, nickname, group, role = message.split("::")
+                for ws, info in clients.items():
+                    if ws != websocket:
+                        if role == "admin" or group in info["group"].split(","):
+                            await ws.send(f"GROUP_CALL::{nickname}::{group}::{role}")
 
             elif message.startswith("KICK::"):
-                _, admin, target = message.split("::")
-                if admin in connected and connected[admin]["role"] == "admin":
-                    if target in connected:
-                        await connected[target]["ws"].send("KICKED")
-                        await connected[target]["ws"].close()
-                        del connected[target]
-                        await broadcast_users()
+                _, sender, target_nick = message.split("::")
+                for ws, info in list(clients.items()):
+                    if info["nickname"] == target_nick:
+                        try:
+                            await ws.send("KICKED")
+                        except:
+                            pass
+                        await ws.close()
+                        del clients[ws]
+                        await notify_users()
+                        break
 
-    except websockets.exceptions.ConnectionClosed:
+    except websockets.ConnectionClosed:
         pass
     finally:
-        if user and user in connected:
-            del connected[user]
-            await broadcast_users()
-
-async def broadcast_users():
-    user_list = ",".join(connected.keys())
-    for info in connected.values():
-        await info["ws"].send(f"USERS::{user_list}")
+        if websocket in clients:
+            del clients[websocket]
+            await notify_users()
 
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", 10000):
-        print("Server started on port 10000")
+    async with websockets.serve(handler, "0.0.0.0", 8000):
+        print("服务器已启动，监听端口 8000...")
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
