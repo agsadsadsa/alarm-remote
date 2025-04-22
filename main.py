@@ -5,6 +5,7 @@ import json
 import os
 import uvicorn
 
+
 app = FastAPI()
 
 @app.websocket("/ws/{username}")
