@@ -1,11 +1,10 @@
 import asyncio
 import websockets
-import json
 
 clients = {}
 
 async def notify_users():
-    users = [user["nickname"] for user in clients.values()]
+    users = [info["nickname"] for info in clients.values()]
     message = f"USERS::{','.join(users)}"
     await asyncio.gather(*[ws.send(message) for ws in clients if ws.open])
 
@@ -20,24 +19,26 @@ async def handler(websocket):
             elif message.startswith("GROUP_CALL::"):
                 _, nickname, group, role = message.split("::")
                 for ws, info in clients.items():
-                    if ws.open:
-                        if group in info["group"].split(","):
-                            await ws.send(f"GROUP_CALL::{nickname}::{group}::{role}")
+                    if ws.open and group in info["group"].split(","):
+                        await ws.send(f"GROUP_CALL::{nickname}::{group}::{role}")
 
             elif message.startswith("KICK::"):
                 _, sender, target_nick = message.split("::")
                 to_kick = None
-                for ws, info in list(clients.items()):
+                for ws, info in clients.items():
                     if info["nickname"] == target_nick:
                         to_kick = ws
                         break
-                if to_kick and to_kick != websocket:
+
+                if to_kick:
                     try:
                         await to_kick.send("KICKED")
+                        await to_kick.close()
                     except:
                         pass
-                    await to_kick.close()
-                    del clients[to_kick]
+                    finally:
+                        if to_kick in clients:
+                            del clients[to_kick]
                     await notify_users()
 
     except websockets.ConnectionClosed:
