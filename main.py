@@ -1,50 +1,39 @@
-import asyncio
-import os
-import websockets
+clients = set()
+user_nicknames = {}
 
-clients = {}
+async def register(ws):
+    clients.add(ws)
 
-async def handler(websocket):
+async def unregister(ws):
+    clients.discard(ws)
+    user_nicknames.pop(ws, None)
+    await broadcast_users()
+
+async def broadcast_users():
+    names = ",".join(user_nicknames.values())
+    message = f"USERS::{names}"
+    await asyncio.gather(*[client.send(message) for client in clients if not client.closed])
+
+async def handler(ws):
+    await register(ws)
     try:
-        nickname, group, role = "", "", ""
-        async for message in websocket:
-            if message.startswith("REGISTER::"):
-                _, nickname, group, role = message.split("::")
-                print(f"[连接] {nickname} 加入 {group}")
-                clients[websocket] = {"nickname": nickname, "group": group, "role": role}
-                await broadcast_user_list()
-            elif message.startswith("GROUP_CALL::"):
-                _, sender, sender_group, sender_role = message.split("::")
-                for ws, info in clients.items():
-                    if ws != websocket and sender_group in info["group"].split(","):
-                        await ws.send(f"GROUP_CALL::{sender}::{sender_group}::{sender_role}")
-            elif message.startswith("KICK::"):
-                _, sender, target = message.split("::")
-                for ws, info in list(clients.items()):
-                    if info["nickname"] == target:
-                        await ws.send("KICKED")
-                        await ws.close()
-                        del clients[ws]
-                        await broadcast_user_list()
-    except:
-        pass
+        async for msg in ws:
+            if msg.startswith("NICK::"):
+                nickname = msg[6:]
+                user_nicknames[ws] = nickname
+                await broadcast_users()
+            elif msg.startswith("CALL::"):
+                sender = msg[6:]
+                await asyncio.gather(*[c.send(f"CALL::{sender}") for c in clients if c != ws])
+            elif msg.startswith("PRIVATE_CALL::"):
+                _, sender, receiver = msg.split("::")
+                for client, name in user_nicknames.items():
+                    if name == receiver:
+                        await client.send(f"PRIVATE_CALL::{sender}::{receiver}")
+                        break
     finally:
-        if websocket in clients:
-            print(f"[断开] {clients[websocket]['nickname']} 离开")
-            del clients[websocket]
-            await broadcast_user_list()
-
-async def broadcast_user_list():
-    user_list = ",".join(info["nickname"] for info in clients.values())
-    for ws in clients:
-        if ws.open:
-            await ws.send(f"USERS::{user_list}")
+        await unregister(ws)
 
 async def main():
-    port = int(os.getenv("PORT", 10000))
-    async with websockets.serve(handler, "0.0.0.0", port):
-        print(f"服务器已启动，监听端口 {port}")
+    async with websockets.serve(handler, "0.0.0.0", 10000):
         await asyncio.Future()
-
-if __name__ == "__main__":
-    asyncio.run(main())
