@@ -1,39 +1,23 @@
-clients = set()
-user_nicknames = {}
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from manager import connection_manager
+from models import UserMessage
+import json
+import os
+import uvicorn
 
-async def register(ws):
-    clients.add(ws)
+app = FastAPI()
 
-async def unregister(ws):
-    clients.discard(ws)
-    user_nicknames.pop(ws, None)
-    await broadcast_users()
-
-async def broadcast_users():
-    names = ",".join(user_nicknames.values())
-    message = f"USERS::{names}"
-    await asyncio.gather(*[client.send(message) for client in clients if not client.closed])
-
-async def handler(ws):
-    await register(ws)
+@app.websocket("/ws/{username}")
+async def websocket_endpoint(websocket: WebSocket, username: str):
+    await connection_manager.connect(websocket, username)
     try:
-        async for msg in ws:
-            if msg.startswith("NICK::"):
-                nickname = msg[6:]
-                user_nicknames[ws] = nickname
-                await broadcast_users()
-            elif msg.startswith("CALL::"):
-                sender = msg[6:]
-                await asyncio.gather(*[c.send(f"CALL::{sender}") for c in clients if c != ws])
-            elif msg.startswith("PRIVATE_CALL::"):
-                _, sender, receiver = msg.split("::")
-                for client, name in user_nicknames.items():
-                    if name == receiver:
-                        await client.send(f"PRIVATE_CALL::{sender}::{receiver}")
-                        break
-    finally:
-        await unregister(ws)
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            await connection_manager.handle_message(username, message)
+    except WebSocketDisconnect:
+        await connection_manager.disconnect(username)
 
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", 10000):
-        await asyncio.Future()
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
