@@ -15,6 +15,7 @@ async def handler(websocket):
             await websocket.close()
             return
 
+        
         nickname = raw_nick[6:]
         connected_users[nickname] = websocket
         print(f"{nickname} connected")
