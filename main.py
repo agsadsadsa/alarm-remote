@@ -1,43 +1,49 @@
 import asyncio
 import websockets
-import os
-import logging
 
-logging.basicConfig(level=logging.INFO)
+connected_users = {}
 
-PORT = int(os.environ.get("PORT", 10000))
-connected_users = {}  # {websocket: nickname}
-
-async def broadcast_users():
-    users = ",".join(connected_users.values())
-    message = f"USERS::{users}"
-    await asyncio.gather(*[ws.send(message) for ws in connected_users])
-
-async def broadcast_message(msg):
-    await asyncio.gather(*[ws.send(msg) for ws in connected_users])
+async def notify_user_list():
+    if connected_users:
+        msg = "USERS::" + ",".join(connected_users.keys())
+        await asyncio.gather(*[ws.send(msg) for ws in connected_users.values()])
 
 async def handler(websocket):
     try:
-        nickname = await websocket.recv()
-        connected_users[websocket] = nickname
-        logging.info(f"{nickname} connected.")
-        await broadcast_users()
+        raw_nick = await websocket.recv()
+        if not raw_nick.startswith("NICK::"):
+            await websocket.close()
+            return
+
+        nickname = raw_nick[6:]
+        connected_users[nickname] = websocket
+        print(f"{nickname} connected")
+        await notify_user_list()
 
         async for message in websocket:
+            print(f"{nickname}: {message}")
             if message.startswith("CALL::"):
-                await broadcast_message(message)
-    except Exception as e:
-        logging.warning(f"Error: {e}")
+                for ws in connected_users.values():
+                    await ws.send(message)
+            elif message.startswith("PRIVATE_CALL::"):
+                _, from_user, to_user = message.split("::")
+                if to_user in connected_users:
+                    await connected_users[to_user].send(message)
+
+    except:
+        pass
     finally:
-        if websocket in connected_users:
-            logging.info(f"{connected_users[websocket]} disconnected.")
-            del connected_users[websocket]
-            await broadcast_users()
+        for name, ws in list(connected_users.items()):
+            if ws == websocket:
+                print(f"{name} disconnected")
+                del connected_users[name]
+        await notify_user_list()
 
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", PORT):
-        logging.info(f"Server running on port {PORT}")
-        await asyncio.Future()  # run forever
+    port = int(os.environ.get("PORT", 10000))
+    async with websockets.serve(handler, "0.0.0.0", port):
+        await asyncio.Future()
 
 if __name__ == "__main__":
+    import os
     asyncio.run(main())
