@@ -1,48 +1,49 @@
-
 import asyncio
 import websockets
+import json
 
-connected_users = {}  # websocket -> {'nickname': str, 'group': str}
-user_lookup = {}      # nickname -> websocket
+# 在线用户字典：{ websocket: {"name": str, "groups": set(str)} }
+connected_users = {}
 
-async def notify_group(group, sender_nick, message):
-    for ws, info in connected_users.items():
-        if info.get('group') == group and info.get('nickname') != sender_nick:
-            await ws.send(message)
+async def notify_user_list():
+    """广播在线用户列表"""
+    users = [info["name"] for info in connected_users.values()]
+    message = f"USERS::{','.join(users)}"
+    await asyncio.gather(*[
+        ws.send(message) for ws in connected_users
+    ])
 
-async def update_user_lists():
-    users = ",".join(info['nickname'] for info in connected_users.values())
-    for ws in connected_users:
-        await ws.send("USERS::" + users)
-
-async def handle_client(ws):
+async def handler(websocket):
     try:
-        async for message in ws:
+        # 等待客户端发送注册信息
+        async for message in websocket:
             if message.startswith("REGISTER::"):
-                _, nickname, group = message.split("::")
-                connected_users[ws] = {'nickname': nickname, 'group': group}
-                user_lookup[nickname] = ws
-                await update_user_lists()
+                _, name, group_str = message.split("::", 2)
+                groups = set(g.strip() for g in group_str.split(",") if g.strip())
+                connected_users[websocket] = {"name": name, "groups": groups}
+                print(f"{name} 加入了，分组: {groups}")
+                await notify_user_list()
 
             elif message.startswith("GROUP_CALL::"):
-                _, nickname = message.split("::")
-                user_info = connected_users.get(ws)
-                if user_info:
-                    group = user_info['group']
-                    await notify_group(group, nickname, f"GROUP_CALL::{nickname}")
+                sender = connected_users.get(websocket, {}).get("name", "未知")
+                sender_groups = connected_users.get(websocket, {}).get("groups", set())
+                if sender_groups:
+                    for ws, info in connected_users.items():
+                        if ws != websocket and sender_groups & info["groups"]:
+                            await ws.send(f"GROUP_CALL::{sender}")
+                print(f"{sender} 呼叫了分组 {sender_groups}")
 
-    except websockets.exceptions.ConnectionClosed:
+    except websockets.ConnectionClosed:
         pass
     finally:
-        if ws in connected_users:
-            nickname = connected_users[ws]['nickname']
-            user_lookup.pop(nickname, None)
-            connected_users.pop(ws, None)
-            await update_user_lists()
+        if websocket in connected_users:
+            print(f"{connected_users[websocket]['name']} 离线")
+            del connected_users[websocket]
+            await notify_user_list()
 
 async def main():
-    async with websockets.serve(handle_client, "0.0.0.0", 10000 ):
-        print("Server running at ws://0.0.0.0:10000 ")
+    async with websockets.serve(handler, "0.0.0.0", 10000):
+        print("服务端启动，监听端口 10000")
         await asyncio.Future()
 
 if __name__ == "__main__":
