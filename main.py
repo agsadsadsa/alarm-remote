@@ -41,8 +41,8 @@ async def handle_client(ws):
             await update_user_lists()
 
 async def main():
-    async with websockets.serve(handle_client, "0.0.0.0", 8765):
-        print("Server running at ws://0.0.0.0:8765")
+    async with websockets.serve(handle_client, "0.0.0.0", 10000 ):
+        print("Server running at ws://0.0.0.0:10000 ")
         await asyncio.Future()
 
 if __name__ == "__main__":
