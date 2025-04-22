@@ -1,16 +1,31 @@
-import asyncio
-import websockets
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+app = FastAPI()
 
 clients = {}
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def notify_users():
     users = [info["nickname"] for info in clients.values()]
     message = f"USERS::{','.join(users)}"
-    await asyncio.gather(*[ws.send(message) for ws in clients if ws.open])
+    for ws in clients:
+        await ws.send_text(message)
 
-async def handler(websocket):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
     try:
-        async for message in websocket:
+        while True:
+            message = await websocket.receive_text()
             if message.startswith("REGISTER::"):
                 _, nickname, group, role = message.split("::")
                 clients[websocket] = {"nickname": nickname, "group": group, "role": role}
@@ -19,8 +34,8 @@ async def handler(websocket):
             elif message.startswith("GROUP_CALL::"):
                 _, nickname, group, role = message.split("::")
                 for ws, info in clients.items():
-                    if ws.open and group in info["group"].split(","):
-                        await ws.send(f"GROUP_CALL::{nickname}::{group}::{role}")
+                    if group in info["group"].split(","):
+                        await ws.send_text(f"GROUP_CALL::{nickname}::{group}::{role}")
 
             elif message.startswith("KICK::"):
                 _, sender, target_nick = message.split("::")
@@ -29,29 +44,12 @@ async def handler(websocket):
                     if info["nickname"] == target_nick:
                         to_kick = ws
                         break
-
                 if to_kick:
-                    try:
-                        await to_kick.send("KICKED")
-                        await to_kick.close()
-                    except:
-                        pass
-                    finally:
-                        if to_kick in clients:
-                            del clients[to_kick]
+                    await to_kick.send_text("KICKED")
+                    await to_kick.close()
+                    del clients[to_kick]
                     await notify_users()
-
-    except websockets.ConnectionClosed:
-        pass
-    finally:
+    except WebSocketDisconnect:
         if websocket in clients:
             del clients[websocket]
             await notify_users()
-
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", 10000):
-        print("服务器已启动，监听端口 10000...")
-        await asyncio.Future()  # run forever
-
-if __name__ == "__main__":
-    asyncio.run(main())
