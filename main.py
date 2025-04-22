@@ -4,6 +4,7 @@ import websockets
 
 clients = {}
 
+
 async def handler(websocket):
     try:
         nickname, group, role = "", "", ""
